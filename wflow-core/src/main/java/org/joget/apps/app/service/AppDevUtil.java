@@ -59,6 +59,7 @@ import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.eclipse.jgit.transport.TrackingRefUpdate;
 import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.eclipse.jgit.util.FS;
 import org.hibernate.proxy.HibernateProxy;
 import org.joget.apps.app.dao.AppDefinitionDao;
 import org.joget.apps.app.model.AppDefinition;
@@ -76,6 +77,7 @@ import org.joget.apps.app.model.BuilderDefinition;
 import org.joget.apps.form.dao.FormDataDaoImpl;
 import org.joget.apps.form.service.CustomFormDataTableUtil;
 import org.joget.commons.util.DynamicDataSourceManager;
+import org.joget.commons.util.HostManager;
 import org.joget.commons.util.LogUtil;
 import org.joget.commons.util.SecurityUtil;
 import org.joget.commons.util.SetupManager;
@@ -185,7 +187,16 @@ public class AppDevUtil {
     public static Git gitInit(File projectDir) throws GitAPIException, IllegalStateException {
         // init git directory
 //        LogUtil.debug(GitUtil.class.getName(), "Init Git repository");
+        FS fs = null;
+        if (HostManager.isVirtualHostEnabled()) {
+            fs = FS.DETECTED;
+            File config = new File(projectDir.getAbsolutePath() + File.separator + "gitconfig");
+            fs.setGitSystemConfig(config);
+            fs.setUserHome(projectDir);
+        }
+
         Git git = Git.init()
+                .setFs(fs)
                 .setDirectory(projectDir)
                 .call();
         return git;
@@ -522,22 +533,43 @@ public class AppDevUtil {
         
         File file = new File(projectDir, path);
         String fileContents = FileUtils.readFileToString(file, "UTF-8");
-        String ours = "<<<<<<< HEAD\n";
+        String ours = "<<<<<<< HEAD";
         String separator = "=======";
         String theirs = ">>>>>>>";
         int start = fileContents.indexOf(ours);
+        
         while (start >= 0) {
+            //find ours full line with carriage return
+            String fullLineOurs = fileContents.substring(start, fileContents.indexOf("\n", start)+1);
+            
             int theirsIndex = fileContents.indexOf(theirs);
             int endTheirsIndex = fileContents.indexOf("\n", theirsIndex);
             String diffStr = fileContents.substring(start, endTheirsIndex);
-            LogUtil.debug(AppDevUtil.class.getName(), "Merge conflict: " + diffStr);            
-            // remove HEAD
-            fileContents = StringUtils.replaceOnce(fileContents, ours, "");
-            // remove separator and theirs content
-            int separatorIndex = fileContents.indexOf(separator);
-            theirsIndex = fileContents.indexOf(theirs);
-            endTheirsIndex = fileContents.indexOf("\n", theirsIndex);
-            String replaceStr = fileContents.substring(separatorIndex, endTheirsIndex+1);
+            LogUtil.debug(AppDevUtil.class.getName(), "Merge conflict: " + diffStr);
+            
+            String replaceStr = "";
+            if (path.endsWith("appDefinition.xml") && fileContents.substring(start + fullLineOurs.length(), fileContents.indexOf(separator)).contains("<packageDefinitionList/>")) {
+                int separatorIndex = fileContents.indexOf(separator);
+                
+                // remove separator and our content
+                endTheirsIndex = fileContents.indexOf("\n", separatorIndex);
+                replaceStr = fileContents.substring(start, endTheirsIndex+1);
+                
+                // remove End
+                String endtheirs = fileContents.substring(fileContents.indexOf(theirs), fileContents.indexOf("\n", theirsIndex)+1);
+                fileContents = StringUtils.replaceOnce(fileContents, endtheirs, "");
+            } else {
+                // remove HEAD
+                fileContents = StringUtils.replaceOnce(fileContents, fullLineOurs, "");
+                
+                int separatorIndex = fileContents.indexOf(separator);
+                
+                // remove separator and theirs content
+                theirsIndex = fileContents.indexOf(theirs);
+                endTheirsIndex = fileContents.indexOf("\n", theirsIndex);
+                replaceStr = fileContents.substring(separatorIndex, endTheirsIndex+1);
+            }
+            
             fileContents = StringUtils.replaceOnce(fileContents, replaceStr, "");
             start = fileContents.indexOf(ours);
         }
@@ -838,7 +870,7 @@ public class AppDevUtil {
              
             if (toSave) {
                 // save file contents
-                FileUtils.writeStringToFile(file, fileContents, "UTF-8");
+                FileUtils.writeStringToFile(file, compatibleNewline(fileContents), "UTF-8");
                 if (commitMessage != null) {
                     // git add to commit
                     String[] extensions = new String[] { "json", "xml", "xpdl" };
@@ -913,8 +945,14 @@ public class AppDevUtil {
         File projectDir = AppDevUtil.dirSetup(baseDir, projectDirName);
         Git git = AppDevUtil.gitInit(projectDir);
         String gitBranch = getGitBranchName(appDefinition);
+        boolean checkedOut = true;
         try {
             AppDevUtil.gitCheckout(git, gitBranch);
+        } catch(RefNotFoundException rnfe) {
+            // set flag to checkout after pull for newly initialized repos "Ref HEAD cannot be resolved" error 
+            checkedOut = false;
+        }
+        try {
             Properties gitProperties = getAppDevProperties(appDefinition);
             boolean alwaysPull = Boolean.parseBoolean(gitProperties.getProperty(PROPERTY_GIT_CONFIG_PULL));
             if (pull || alwaysPull) {
@@ -942,6 +980,10 @@ public class AppDevUtil {
                     if (request != null) {
                         request.setAttribute(ATTRIBUTE_GIT_PULL_REQUEST + appId, "true");
                     }
+                    // if checkout not successful earlier before pull, checkout now
+                    if (!checkedOut) {
+                        AppDevUtil.gitCheckout(git, gitBranch);
+                    }
                 }
             }
         } catch(RefNotFoundException | RefNotAdvertisedException | JGitInternalException | URISyntaxException re) {
@@ -956,6 +998,9 @@ public class AppDevUtil {
     }
     
     public static List<String> getAppGitBranches(AppDefinition appDef) throws GitAPIException, IOException {
+        if (appDef == null || appDef.getVersion() == null) {
+            return new ArrayList<String>();
+        }
         LogUtil.debug(AppDevUtil.class.getName(), "List branches:");
         String baseDir = AppDevUtil.getAppDevBaseDirectory();
         String projectDirName = getAppGitDirectory(appDef);
@@ -1308,6 +1353,9 @@ public class AppDevUtil {
     
     public static AppDefinition dirSyncApp(String appId, Long appVersion) throws IOException, GitAPIException, URISyntaxException {
         AppDefinition updatedAppDef = null;
+        if (appVersion == null) {
+            return null;
+        }
         
         // check if project dir exists
         AppDefinitionDao appDefinitionDao = (AppDefinitionDao)AppUtil.getApplicationContext().getBean("appDefinitionDao");
@@ -1339,7 +1387,8 @@ public class AppDevUtil {
             lastModifiedCal.setTimeZone(TimeZone.getTimeZone("UTC"));
             appLastModifiedDate = lastModifiedCal.getTime();            
         }
-        if ("true".equals(appAutoSync) && (appLastModifiedDate == null || (latestDate != null && latestDate.after(appLastModifiedDate)))) {
+        //latestDate is null when git folder is empty, should not sync in that case.
+        if ("true".equals(appAutoSync) && latestDate != null && (appLastModifiedDate == null || latestDate.after(appLastModifiedDate))) {
             LogUtil.info(AppDevUtil.class.getName(), "Change detected (" + latestDate + " vs " + appLastModifiedDate + "), init sync for app " + appDef);
             // sync app
             updatedAppDef = appDefinitionDao.syncAppDefinition(appDef.getAppId(), appDef.getVersion());
