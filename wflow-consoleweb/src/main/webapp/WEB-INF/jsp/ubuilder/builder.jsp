@@ -60,7 +60,17 @@
                         <c:if test="${empty propertyOptions}">
                             <c:set var="propertyOptions" value="''"/>
                         </c:if>
-                        UserviewBuilder.initMenuType('${category}', '${element.className}', '${element.i18nLabel}', '${element.icon}', ${propertyOptions}, '${element.defaultPropertyValues}', '${element.pwaValidationType}');
+                        try {
+                            <c:set var="initScript">                    
+                                UserviewBuilder.initMenuType('<c:out value='${fn:replace(category, "\'", "\\\\\'")}' escapeXml='false'/>', '${element.className}', '<c:out value='${fn:replace(element.i18nLabel, "\'", "\\\\\'")}' escapeXml='false'/>', '<ui:escape value='${element.icon}' format='javascript'/>', ${propertyOptions}, '<ui:escape value='${element.defaultPropertyValues}' format='javascript'/>', '${element.pwaValidationType}');
+                            </c:set>
+                            <c:set var="initScript"><ui:escape value="${initScript}" format="javascript"/></c:set>
+                            eval("${initScript}");    
+                        } catch (err) {
+                            if (console && console.log) {
+                                console.log("Error initializing ${element.className} : " + err);
+                            }
+                        }
                     </c:forEach>
                 </c:forEach>
 
@@ -74,7 +84,7 @@
 
             window.onbeforeunload = function() {
                 if(UserviewBuilder.saveChecker != 0){
-                    return "<fmt:message key="ubuilder.saveBeforeClose" />";
+                    return '<ui:msgEscJS key="ubuilder.saveBeforeClose" />';
                 }
             };
         </script>
@@ -94,8 +104,8 @@
                         <ul id="builder-steps">
                         <li id="step-design" class="first-active active"><a href="#step-design-container"><span class="steps-bg"><span class="title"><fmt:message key="ubuilder.designUserview"/></span><span class="subtitle"><fmt:message key="ubuilder.designUserview.description"/></span></span></a></li>
                         <li id="step-setting"><a href="#step-setting-container"><span class="steps-bg"><span class="title"><fmt:message key="ubuilder.setting"/></span><span class="subtitle"><fmt:message key="ubuilder.setting.description"/></span></span></a></li>
-                        <li id="step-preview"><a onclick="UserviewBuilder.preview();" title="<fmt:message key="ubuilder.preview.tip"/>"><span class="steps-bg"><span class="title"><fmt:message key="ubuilder.preview"/></span><span class="subtitle"><fmt:message key="ubuilder.preview.description"/></span></span></a></li>
-                        <li id="step-save" class="last-inactive save-disabled"><a onclick="UserviewBuilder.mergeAndSave();" title="<fmt:message key="ubuilder.save.tip"/>"><span class="steps-bg"><span class="title"><fmt:message key="ubuilder.save"/></span><span class="subtitle"><fmt:message key="ubuilder.save.description"/></span></span></a></li>
+                        <li id="step-preview"><a onclick="UserviewBuilder.preview();" title="<ui:msgEscHTML key="ubuilder.preview.tip"/>"><span class="steps-bg"><span class="title"><fmt:message key="ubuilder.preview"/></span><span class="subtitle"><fmt:message key="ubuilder.preview.description"/></span></span></a></li>
+                        <li id="step-save" class="last-inactive save-disabled"><a onclick="UserviewBuilder.mergeAndSave();" title="<ui:msgEscHTML key="ubuilder.save.tip"/>"><span class="steps-bg"><span class="title"><fmt:message key="ubuilder.save"/></span><span class="subtitle"><fmt:message key="ubuilder.save.description"/></span></span></a></li>
                     </ul>
                     <div id="builder-bg"></div>
                 </div>
@@ -105,8 +115,8 @@
                     <div id="step-design-container">
                         <div id="toolbar">
                             <ul>
-                                <li id="tool-undo"><a class="undo-disabled" onclick="UserviewBuilder.undo();" title="<fmt:message key="ubuilder.undo.disabled.tip"/>"><span><fmt:message key="ubuilder.undo.disabled"/></span></a></li>
-                                <li id="tool-redo"><a class="redo-disabled" onclick="UserviewBuilder.redo();" title="<fmt:message key="ubuilder.redo.disabled.tip"/>"><span><fmt:message key="ubuilder.redo.disabled"/></span></a></li>
+                                <li id="tool-undo"><a class="undo-disabled" onclick="UserviewBuilder.undo();" title="<ui:msgEscHTML key="ubuilder.undo.disabled.tip"/>"><span><fmt:message key="ubuilder.undo.disabled"/></span></a></li>
+                                <li id="tool-redo"><a class="redo-disabled" onclick="UserviewBuilder.redo();" title="<ui:msgEscHTML key="ubuilder.redo.disabled.tip"/>"><span><fmt:message key="ubuilder.redo.disabled"/></span></a></li>
                             </ul>
                             <div class="clear"></div>
                         </div>

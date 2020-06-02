@@ -74,18 +74,18 @@
                     },
                     success: function(response) {
                         FormBuilder.originalJson = FormBuilder.generateJSON();
-                        FormBuilder.showMessage("<fmt:message key="fbuilder.saved"/>");
+                        FormBuilder.showMessage('<ui:msgEscJS key="fbuilder.saved"/>');
                         setTimeout(function(){ FormBuilder.showMessage(""); }, 2000);
                     },
                     error: function(jqXHR, textStatus, errorThrown) {
-                        alert("<fmt:message key="fbuilder.errorSaving"/> (" + textStatus + "): " + errorThrown);
+                        alert('<ui:msgEscJS key="fbuilder.errorSaving"/> (' + textStatus + '): ' + errorThrown);
                     }
                 });
             }
 
             window.onbeforeunload = function() {
                 if(!FormBuilder.isSaved()){
-                    return "<fmt:message key="fbuilder.saveBeforeClose"/>";
+                    return '<ui:msgEscJS key="fbuilder.saveBeforeClose"/>';
                 }
             };
 
@@ -112,11 +112,17 @@
             <c:forEach items="${palette.editableElementList}" var="element">
                 <c:if test="${!empty element.propertyOptions}">
                 try {
-                    var elementProps = ${PropertyUtil.injectHelpLink(element.helpLink, element.propertyOptions)};
-                    var elementTemplate = "${element.formBuilderTemplate}";
-                    FormBuilder.initElementDefinition("${element.className}", elementProps, elementTemplate);
+                    <c:set var="initScript">                    
+                        var elementProps = ${PropertyUtil.injectHelpLink(element.helpLink, element.propertyOptions)};
+                        var elementTemplate = "<c:out value="${fn:replace(element.formBuilderTemplate, '\"', '\\\\\"')}" escapeXml="false"/>";
+                        FormBuilder.initElementDefinition("${element.className}", elementProps, elementTemplate);
+                    </c:set>
+                    <c:set var="initScript"><ui:escape value="${initScript}" format="javascript"/></c:set>
+                    eval("${initScript}");
                 } catch (e) {
-                    alert("Error initializing ${element.name}:" + e);
+                    if (console && console.log) {
+                        console.log("Error initializing ${element.className} : " + e);
+                    }
                 }
                 </c:if>
             </c:forEach>
@@ -158,7 +164,7 @@
                                         <ul>
                                         <c:forEach items="${elementList}" var="element">
                                             <li>
-                                                <div class="form-palette-element builder-palette-element" element-class="${element.className}" element-property='${element.defaultPropertyValues}' data-icon='<c:out escapeXml="true" value="${element.formBuilderIcon}" />'>
+                                                <div class="form-palette-element builder-palette-element" element-class="${element.className}" element-property='<c:out escapeXml="true" value="${element.defaultPropertyValues}" />' data-icon='<c:out escapeXml="true" value="${element.formBuilderIcon}" />'>
                                                     <label>${element.i18nLabel}</label>
                                                 </div>
                                             </li>

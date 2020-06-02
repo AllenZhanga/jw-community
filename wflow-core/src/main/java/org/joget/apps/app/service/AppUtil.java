@@ -38,7 +38,7 @@ import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.commons.mail.EmailAttachment;
 import org.apache.commons.mail.EmailException;
 import org.apache.commons.mail.HtmlEmail;
-import org.joget.apps.app.dao.PluginDefaultPropertiesDao;
+import org.joget.apps.app.dao.MessageDao;
 import org.joget.apps.app.dao.UserReplacementDao;
 import org.joget.apps.app.lib.EmailTool;
 import org.joget.apps.app.model.AppDefinition;
@@ -139,11 +139,6 @@ public class AppUtil implements ApplicationContextAware {
     public static void setCurrentAppDefinition(AppDefinition appDef) throws BeansException {
         currentAppDefinition.set(appDef);
         resetAppDefinition.set(null);
-        
-        // set app messages
-        if (!AppUtil.isAppMessagesSet()) {
-            AppUtil.initAppMessages(appDef);
-        }
     }
 
     /**
@@ -553,9 +548,12 @@ public class AppUtil implements ApplicationContextAware {
 
                                 //process nested hash
                                 while (nestedHashVar.contains("{") && nestedHashVar.contains("}")) {
+                                    boolean hasMatch = false;
                                     Pattern nestedPattern = Pattern.compile("\\{([^\\{\\}])*\\}");
                                     Matcher nestedMatcher = nestedPattern.matcher(nestedHashVar);
                                     while (nestedMatcher.find()) {
+                                        hasMatch = true;
+                                        
                                         String nestedHash = nestedMatcher.group();
                                         String nestedHashString = nestedHash.replace("{", "#");
                                         nestedHashString = nestedHashString.replace("}", "#");
@@ -565,10 +563,14 @@ public class AppUtil implements ApplicationContextAware {
                                         //if being process
                                         if (!nestedHashString.equals(processedNestedHashValue)) {
                                             tempVar = tempVar.replaceAll(StringUtil.escapeRegex(nestedHash), StringUtil.escapeRegex(processedNestedHashValue));
-                                        } 
+                                        }
 
                                         //remove nested hash 
                                         nestedHashVar = nestedHashVar.replaceAll(StringUtil.escapeRegex(nestedHash), StringUtil.escapeRegex(processedNestedHashValue));
+                                    }
+                                    if (!hasMatch) {
+                                        //no nested hash syntax found
+                                        break;
                                     }
                                 }
 
@@ -638,7 +640,8 @@ public class AppUtil implements ApplicationContextAware {
                     || format.equals(StringUtil.TYPE_SQL)
                     || format.equals(StringUtil.TYPE_URL)
                     || format.equals(StringUtil.TYPE_XML)
-                    || format.startsWith(StringUtil.TYPE_SEPARATOR))) {
+                    || format.startsWith(StringUtil.TYPE_SEPARATOR)
+                    || format.startsWith(StringUtil.escapeRegex(format)))) {
                 isValid = false;
             }
             //check for 1 enough
@@ -961,15 +964,17 @@ public class AppUtil implements ApplicationContextAware {
      */
     public static Map<String, String> getAppMessages(AppDefinition appDef) {
         Map<String, String> messageMap = new HashMap<String, String>();
+        String currentLocale = AppUtil.getAppLocale();
+        if (currentLocale == null) {
+            currentLocale = "en_US";
+        }
         if (appDef != null) {
-            Collection<Message> messageList = appDef.getMessageList();
-            String currentLocale = AppUtil.getAppLocale();
+            MessageDao messageDao = (MessageDao) getApplicationContext().getBean("messageDao");
+            Collection<Message> messageList = messageDao.getMessageList(null, currentLocale, appDef, null, null, null, null);
             for (Message message : messageList) {
-                if (currentLocale != null && currentLocale.equals(message.getLocale())) {
-                    String key = message.getMessageKey();
-                    String label = message.getMessage();
-                    messageMap.put(key, label);
-                }
+                String key = message.getMessageKey();
+                String label = message.getMessage();
+                messageMap.put(key, label);
             }
         }
         return messageMap;
@@ -995,7 +1000,7 @@ public class AppUtil implements ApplicationContextAware {
         return result;
     }
     
-    /**
+/**
      * Replace all app-specific message in content
      *
      * @param label
@@ -1004,13 +1009,29 @@ public class AppUtil implements ApplicationContextAware {
     public static String replaceAppMessages(String content, String escapeType) {
         Map<String, String> appMessages = getAppMessageFromStore();
         if (appMessages != null) {
-            for (String key : appMessages.keySet()) {
-                String translated = appMessages.get(key);
-                if (escapeType != null) {
-                    key = StringUtil.escapeString(key, escapeType, null);
-                    translated = StringUtil.escapeString(translated, escapeType, null);
+            Pattern pattern = Pattern.compile("((((['\"])label\\4\\s*:\\s*\\4)((?:\\\\\\4|(?:(?!\\4).))+)\\4)|(#i18n\\.([^#]+)#))");
+            Matcher matcher = pattern.matcher(content);
+            String key = "", match = "";
+            while (matcher.find()) {
+                match = matcher.group();
+                key = matcher.group(5);
+                if (match.startsWith("#i18n.")) {
+                    key = matcher.group(7);
                 }
-                content = content.replaceAll("(?i)(['\"]label['\"]\\s*:\\s*['\"])" + StringUtil.escapeRegex(key) + "(['\"])" , "$1" + StringUtil.escapeRegex(translated) + "$2");
+                if (escapeType != null) {
+                    key = StringUtil.unescapeString(key, escapeType, null);
+                }
+                if (appMessages.containsKey(key)) {
+                    String translated = appMessages.get(key);
+                    if (escapeType != null) {
+                        translated = StringUtil.escapeString(translated, escapeType, null);
+                    }
+                    if (!match.startsWith("#i18n.")) {
+                        content = content.replaceAll(StringUtil.escapeRegex(match) , StringUtil.escapeRegex(matcher.group(3) + translated + matcher.group(4)));
+                    } else {
+                        content = content.replaceAll(StringUtil.escapeRegex(match) , StringUtil.escapeRegex(translated));
+                    }
+                }
             }
         }
         return content;
@@ -1021,6 +1042,10 @@ public class AppUtil implements ApplicationContextAware {
     public static Map<String, String> getAppMessageFromStore() {
         AppDefinition appDef = AppUtil.getCurrentAppDefinition();
         if (appDef != null) {
+            if (!AppUtil.isAppMessagesSet()) {
+                AppUtil.initAppMessages(appDef);
+            }
+            
             Map<String, Map<String, String>> appMessageStore = (Map<String, Map<String, String>>) threadLocalAppMessages.get();
             if (appMessageStore != null && appMessageStore.containsKey(appDef.getAppId()+":"+appDef.getVersion())) {
                 return appMessageStore.get(appDef.getAppId()+":"+appDef.getVersion());

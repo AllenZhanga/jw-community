@@ -577,6 +577,12 @@ public class AppDevUtil {
     }
     
     public static void gitPushLocal(AppDefinition appDef, Git git, File workingDir) throws GitAPIException {
+        HttpServletRequest request = WorkflowUtil.getHttpServletRequest();
+        if (request == null) {
+            //do nothing
+            return;
+        }
+        
         // push to remote
         LogUtil.debug(AppDevUtil.class.getName(), "Push to Git local repo " + appDef.getAppId());
         GitCommitHelper gitCommitHelper = getGitCommitHelper(appDef);
@@ -839,6 +845,12 @@ public class AppDevUtil {
     }
     
     public static void fileSave(AppDefinition appDef, String path, String fileContents, String commitMessage) {
+        HttpServletRequest request = WorkflowUtil.getHttpServletRequest();
+        if (request == null) {
+            //do nothing
+            return;
+        }
+        
         path = SecurityUtil.normalizedFileName(path);
         fileContents = compatibleNewline(fileContents);
         
@@ -889,6 +901,12 @@ public class AppDevUtil {
     }    
     
     public static void fileDelete(AppDefinition appDefinition, String path, String commitMessage) {
+        HttpServletRequest request = WorkflowUtil.getHttpServletRequest();
+        if (request == null) {
+            //do nothing
+            return;
+        }
+        
         path = SecurityUtil.normalizedFileName(path);
         
         try {
@@ -1064,6 +1082,7 @@ public class AppDevUtil {
             Serializer serializer = new Persister();
             serializer.write(appDef, baos);
             appDefinitionXml = baos.toString("UTF-8");
+            appDefinitionXml = appDefinitionXml.replace("<version>"+appDef.getVersion()+"</version>", "<version></version>");
         } catch (Exception ex) {
             LogUtil.error(AppDevUtil.class.getName(), ex, ex.getMessage());
         } finally {
@@ -1134,6 +1153,7 @@ public class AppDevUtil {
             Serializer serializer = new Persister();
             serializer.write(appDef, baos);
             appDefinitionXml = baos.toString("UTF-8");
+            appDefinitionXml = appDefinitionXml.replace("<version>"+appDef.getVersion()+"</version>", "<version></version>");
         } catch (Exception ex) {
             LogUtil.error(AppDevUtil.class.getName(), ex, ex.getMessage());
         } finally {
@@ -1189,6 +1209,12 @@ public class AppDevUtil {
     }
 
     public static void dirCopy(AppDefinition appDef, String sourcePath, String targetDirName, String commitMessage) {
+        HttpServletRequest request = WorkflowUtil.getHttpServletRequest();
+        if (request == null) {
+            //do nothing
+            return;
+        }
+        
         String gitBranch = getGitBranchName(appDef);
         
         try {
@@ -1236,6 +1262,12 @@ public class AppDevUtil {
     } 
     
     public static void dirDelete(AppDefinition appDef, String commitMessage) {
+        HttpServletRequest request = WorkflowUtil.getHttpServletRequest();
+        if (request == null) {
+            //do nothing
+            return;
+        }
+        
         String gitBranch = getGitBranchName(appDef);
         
         try {
@@ -1269,6 +1301,12 @@ public class AppDevUtil {
     }      
 
     public static void dirSyncAppResources(AppDefinition appDef) {
+        HttpServletRequest request = WorkflowUtil.getHttpServletRequest();
+        if (request == null) {
+            //do nothing
+            return;
+        }
+        
         GitCommitHelper gitCommitHelper = getGitCommitHelper(appDef);
         gitCommitHelper.setSyncResources(true);
     }
@@ -1281,11 +1319,23 @@ public class AppDevUtil {
     }    
 
     public static void dirSyncAppPlugins(AppDefinition appDef) {
+        HttpServletRequest request = WorkflowUtil.getHttpServletRequest();
+        if (request == null) {
+            //do nothing
+            return;
+        }
+        
         GitCommitHelper gitCommitHelper = getGitCommitHelper(appDef);
         gitCommitHelper.setSyncPlugins(true);
     }
     
     public static void syncAppPlugins(AppDefinition appDef) {
+        HttpServletRequest request = WorkflowUtil.getHttpServletRequest();
+        if (request == null) {
+            //do nothing
+            return;
+        }
+        
         // get osgi plugins
         PluginManager pluginManager = (PluginManager)AppUtil.getApplicationContext().getBean("pluginManager");
         Collection<Plugin> pluginList = pluginManager.listOsgiPlugin(null);
