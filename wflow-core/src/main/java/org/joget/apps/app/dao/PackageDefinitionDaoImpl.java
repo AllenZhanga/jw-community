@@ -2,6 +2,7 @@ package org.joget.apps.app.dao;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -44,17 +45,20 @@ public class PackageDefinitionDaoImpl extends AbstractVersionedObjectDao<Package
     }
 
     @Override
-    public void saveOrUpdate(PackageDefinition packageDef) {        
+    public void saveOrUpdate(PackageDefinition packageDef) {   
         super.saveOrUpdate(packageDef);
-
-        AppDefinition appDef = packageDef.getAppDefinition();
-        String filename = "appDefinition.xml";
-        String xml = AppDevUtil.getAppDefinitionXml(appDef);
-        String commitMessage = "Update package " + appDef.getId();
-        AppDevUtil.fileSave(appDef, filename, xml, commitMessage);
+        appDefinitionDao.updateDateModified(packageDef.getAppDefinition());
         
-        // sync app plugins
-        AppDevUtil.dirSyncAppPlugins(appDef);
+        if (!AppDevUtil.isGitDisabled() && !AppDevUtil.isImportApp()) {
+            AppDefinition appDef = packageDef.getAppDefinition();
+            String filename = "appDefinition.xml";
+            String xml = AppDevUtil.getAppDefinitionXml(appDef);
+            String commitMessage = "Update package " + appDef.getId();
+            AppDevUtil.fileSave(appDef, filename, xml, commitMessage);
+
+            // sync app plugins
+            AppDevUtil.dirSyncAppPlugins(appDef);
+        }
         
         WorkflowHelper appWorkflowHelper = (WorkflowHelper) WorkflowUtil.getApplicationContext().getBean("workflowHelper");
         appWorkflowHelper.cleanDeadlineAppDefinitionCache(packageDef.getId(), packageDef.getVersion().toString());
@@ -77,8 +81,10 @@ public class PackageDefinitionDaoImpl extends AbstractVersionedObjectDao<Package
         // delete package definition
         super.delete(getEntityName(), obj);
 
-        // sync app plugins
-        AppDevUtil.dirSyncAppPlugins(appDef);
+        if (!AppDevUtil.isGitDisabled()) {
+            // sync app plugins
+            AppDevUtil.dirSyncAppPlugins(appDef);
+        }
         
         String packageId = obj.getId();
         String packageVersion = obj.getVersion().toString();

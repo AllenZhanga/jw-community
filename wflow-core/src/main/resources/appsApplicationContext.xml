@@ -269,9 +269,13 @@
         <property name="publicKey" value="BE54-RlSdVqGwlh_skZ4qQqP1tY7uNZrQbv3IJ_Rd2uRHsId8XjvH2CXav_5PkhrM1XvBLXJyi7tx6io5E3fegg"/>
         <property name="privateKey" value="Fe0bTj0H_UYcg7qnFzx0qBl-H90RuptO6r_vOUZJWvI"/>
     </bean>
+    
+    <!-- Important: this is to let the XPath object created before Security Manageger initialized -->
+    <bean id="dependenciesService" class="org.joget.apps.app.service.DependenciesUtil">
+    </bean>
    
     <aop:config>
-        <aop:advisor advice-ref="txAdvice" pointcut="execution(* org.joget.apps.app.dao.*Dao.*(..))" order="1" />
+        <aop:advisor advice-ref="txAdvice" pointcut="execution(* org.joget.apps.app.dao.*Dao.*(..)) and !(execution(* org.joget.apps.app.dao.AppDefinitionDao.updateDateModified(..)))" order="1" />
         <aop:advisor advice-ref="txAdvice" pointcut="execution(* org.joget.report.dao.*Dao.*(..))" order="1" />
         <aop:advisor advice-ref="txAdvice" pointcut="execution(* org.joget.apps.form.dao.*Dao.*(..))" order="1" />
         <aop:advisor advice-ref="sqlFilterAspect" pointcut="execution(* org.joget.workflow.model.service.WorkflowManager.*(..))" order="1" />

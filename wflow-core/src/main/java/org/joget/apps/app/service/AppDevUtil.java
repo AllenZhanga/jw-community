@@ -17,7 +17,6 @@ import java.util.Collection;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,7 +30,6 @@ import javax.servlet.http.HttpServletRequest;
 import net.sf.ehcache.Cache;
 import net.sf.ehcache.Element;
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.io.filefilter.AbstractFileFilter;
 import org.apache.commons.lang.ArrayUtils;
 import org.apache.commons.lang.StringUtils;
 import org.eclipse.jgit.api.Git;
@@ -74,6 +72,8 @@ import org.joget.apps.app.model.UserviewDefinition;
 import org.joget.apps.app.dao.GitCommitHelper;
 import org.joget.apps.app.model.AbstractAppVersionedObject;
 import org.joget.apps.app.model.BuilderDefinition;
+import org.joget.apps.app.model.PackageActivityPlugin;
+import org.joget.apps.app.model.PackageParticipant;
 import org.joget.apps.form.dao.FormDataDaoImpl;
 import org.joget.apps.form.service.CustomFormDataTableUtil;
 import org.joget.commons.util.DynamicDataSourceManager;
@@ -81,7 +81,6 @@ import org.joget.commons.util.HostManager;
 import org.joget.commons.util.LogUtil;
 import org.joget.commons.util.SecurityUtil;
 import org.joget.commons.util.SetupManager;
-import org.joget.commons.util.UuidGenerator;
 import org.joget.directory.model.User;
 import org.joget.plugin.base.Plugin;
 import org.joget.plugin.base.PluginManager;
@@ -112,6 +111,22 @@ public class AppDevUtil {
     
     public static Map<String, Set<String>> workingPulls = new HashMap<String, Set<String>>();
     protected static Random random = new Random();
+    
+    static ThreadLocal importApp = new ThreadLocal();
+    
+    private static final boolean GIT_DISABLED;
+
+    static {
+        GIT_DISABLED = "true".equalsIgnoreCase(System.getProperty("git.disabled"));
+        if (GIT_DISABLED) {
+            LogUtil.info(AppDevUtil.class.getName(), "Git feature is disabled.");
+        }
+    }
+    
+    public static boolean isGitDisabled() {
+        return GIT_DISABLED;
+    }
+    
     
     public static String getAppDevBaseDirectory() {
         String dir = SetupManager.getBaseDirectory() + File.separator + "app_src";
@@ -352,6 +367,22 @@ public class AppDevUtil {
         }
         return paths;
     }
+    
+    public static boolean gitFileDiff(Git git, String filepath) throws GitAPIException {
+        // get diff paths
+        List<DiffEntry> diffEntries = git.diff()
+                .call();
+        for (DiffEntry entry: diffEntries) {
+            String path = entry.getPath(DiffEntry.Side.NEW);
+            if ("/dev/null".equals(path)) {
+                continue;
+            }
+            if (filepath.equals(path)) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     public static List<String> gitDeletedDiff(Git git, String[] extensions) throws GitAPIException {
         // get diff paths
@@ -428,7 +459,7 @@ public class AppDevUtil {
     public static void gitRenameBranch(Git git, String gitBranch) throws GitAPIException {
         git.branchRename()
                 .setNewName(gitBranch)
-                .call();        
+                .call();      
     }
     
     public static void gitFetchMerge(File projectDir, Git git, String gitUri, String gitUsername, String gitPassword, MergeStrategy mergeStrategy, AppDefinition appDef) throws GitAPIException, IOException {
@@ -675,7 +706,7 @@ public class AppDevUtil {
         } catch (JSONException e) {
             // ignore
         }
-        return formattedJson;        
+        return formattedJson;
     }
 
     public static String getGitBranchName(AppDefinition appDef) {
@@ -689,7 +720,7 @@ public class AppDevUtil {
     }
     
     public static String getWorkingGitDirectory(AppDefinition appDef) {
-        String dir = appDef.getAppId() + System.getProperty("file.separator") + UuidGenerator.getInstance().getUuid();
+        String dir = appDef.getAppId() + System.getProperty("file.separator") + appDef.getAppId() + System.nanoTime();
         return dir;
     }
     
@@ -841,7 +872,8 @@ public class AppDevUtil {
             gitCommitMap = fileInitCommit(appDef, "");
             gitCommitHelper = gitCommitMap.get(appDef.getAppId());
         }
-        return gitCommitHelper;      
+        gitCommitHelper.setAppDefinition(appDef);
+        return gitCommitHelper;  
     }
     
     public static void fileSave(AppDefinition appDef, String path, String fileContents, String commitMessage) {
@@ -873,22 +905,21 @@ public class AppDevUtil {
             // check for content changes
             File file = new File(gitCommitHelper.getWorkingDir(), path);
             boolean toSave = true;
+            boolean isNew = false;
             try {
                 String currentContents = FileUtils.readFileToString(file, "UTF-8");
-                toSave = (currentContents == null || !cleanForCompare(currentContents).equals(cleanForCompare(fileContents)));
+                isNew = currentContents == null;
+                toSave = (isNew || !cleanForCompare(currentContents).equals(cleanForCompare(fileContents)));
             } catch(FileNotFoundException e) {
                 // ignore
             }
              
             if (toSave) {
                 // save file contents
-                FileUtils.writeStringToFile(file, compatibleNewline(fileContents), "UTF-8");
+                FileUtils.writeStringToFile(file, fileContents, "UTF-8");
                 if (commitMessage != null) {
                     // git add to commit
-                    String[] extensions = new String[] { "json", "xml", "xpdl" };
-                    List<String> paths = AppDevUtil.gitDiff(git, extensions);
-                    boolean modified = !paths.isEmpty() && paths.contains(path);
-                    if (modified) {
+                    if (isNew || AppDevUtil.gitFileDiff(git, path)) {
                         AppDevUtil.gitAdd(git, path);
                         gitCommitHelper.addCommitMessage(commitMessage);
                     }
@@ -1109,8 +1140,8 @@ public class AppDevUtil {
             }
             appDef.setPackageDefinitionList(packageDefinitionList);
         }
-        return appDefinitionXml;        
-    }   
+        return appDefinitionXml; 
+    }  
     
     public static String getAppConfigXml(AppDefinition appDefinition) {
         String appDefinitionXml = null;
@@ -1177,7 +1208,7 @@ public class AppDevUtil {
             appDef.setMessageList(messageList);
             appDef.setResourceList(resourceList);
         }
-        return appDefinitionXml;        
+        return appDefinitionXml; 
     }     
     
     public static String getPackageXpdl(AppDefinition appDef) {
@@ -1352,31 +1383,31 @@ public class AppDevUtil {
             // copy plugins
             targetDir.mkdirs();
 
-            // find all definition files
-            final String[] extensions = new String[] { "json", "xml", "xpdl" };
-            final String[] dirs = new String[] { "forms", "lists", "userviews", "builder"};
-            Iterator<File> fileIterator = FileUtils.iterateFiles(gitCommitHelper.getWorkingDir(), new AbstractFileFilter() {
-                @Override
-                public boolean accept(File file) {
-                    String path = file.getName();
-                    int dotIndex = path.lastIndexOf(".");
-                    String ext = (dotIndex >= 0) ? path.substring(dotIndex + 1) : path;
-                    return ArrayUtils.contains(extensions, ext);
-                }
-            }, new AbstractFileFilter() {
-                @Override
-                public boolean accept(File dir, String name) {
-                    return ArrayUtils.contains(dirs, name) || "builder".equals(dir.getName());
-                }
-                
-            });
             // combine all definitions into a string for matching
             String concatAppDef = "";
-            while(fileIterator.hasNext()) {
-                File file = fileIterator.next();
-                String fileContents = FileUtils.readFileToString(file, "UTF-8");
-                concatAppDef += fileContents + "~~~";
+            if (appDef.getFormDefinitionList() != null) {
+                for (FormDefinition o : appDef.getFormDefinitionList()) {
+                    concatAppDef += o.getJson() + "~~~";
+                }
             }
+            if (appDef.getDatalistDefinitionList() != null) {
+                for (DatalistDefinition o : appDef.getDatalistDefinitionList()) {
+                    concatAppDef += o.getJson() + "~~~";
+                }
+            }
+            if (appDef.getUserviewDefinitionList() != null) {
+                for (UserviewDefinition o : appDef.getUserviewDefinitionList()) {
+                    concatAppDef += o.getJson() + "~~~";
+                }
+            }
+            if (appDef.getBuilderDefinitionList() != null) {
+                for (BuilderDefinition o : appDef.getBuilderDefinitionList()) {
+                    concatAppDef += o.getJson() + "~~~";
+                }
+            }
+            concatAppDef += AppDevUtil.fileReadToString(appDef, "appDefinition.xml", false) + "~~~";
+            concatAppDef += AppDevUtil.fileReadToString(appDef, "appConfig.xml", false) + "~~~";
+            
             // look for plugins used in any definition file
             for (Plugin plugin: pluginList) {
                 String pluginClassName = ClassUtils.getUserClass(plugin).getName();
@@ -1397,7 +1428,7 @@ public class AppDevUtil {
             
         } catch (IOException ex) {
             LogUtil.error(AppDevUtil.class.getName(), ex, ex.getMessage());
-        }        
+        }
         
     }    
     
@@ -1504,7 +1535,7 @@ public class AppDevUtil {
     
     public static Date dirLastModified(AppDefinition appDef) throws URISyntaxException, GitAPIException, IOException {
         Date latestDate = null;
-
+        
         String profile = DynamicDataSourceManager.getCurrentProfile();
         String cacheKey = profile + "_dirLastModified_" + appDef.toString();
         Cache cache = (Cache) AppUtil.getApplicationContext().getBean("userviewMenuCache");
@@ -1515,18 +1546,23 @@ public class AppDevUtil {
             }
         }
         if (latestDate == null) {
-            File dir = AppDevUtil.fileGetFileObject(appDef, ".", false);
-            if (dir != null && dir.isDirectory()) {
-                // get latest modified date
-                Collection<File> files = FileUtils.listFiles(dir, new String[]{ "json", "xml", "xpdl", "jar" }, true);
-                for (File file: files) {
-                    BasicFileAttributes attr = Files.readAttributes(file.toPath(), BasicFileAttributes.class);
-                    Date dateModified = new Date(attr.lastModifiedTime().toMillis());
-                    if (latestDate == null || dateModified.after(latestDate)) {
-                        latestDate = dateModified;
+            if (!AppDevUtil.isGitDisabled()) {
+                File dir = AppDevUtil.fileGetFileObject(appDef, ".", false);
+                if (dir != null && dir.isDirectory()) {
+                    // get latest modified date
+                    Collection<File> files = FileUtils.listFiles(dir, new String[]{ "json", "xml", "xpdl", "jar" }, true);
+                    for (File file: files) {
+                        BasicFileAttributes attr = Files.readAttributes(file.toPath(), BasicFileAttributes.class);
+                        Date dateModified = new Date(attr.lastModifiedTime().toMillis());
+                        if (latestDate == null || dateModified.after(latestDate)) {
+                            latestDate = dateModified;
+                        }
                     }
+                    Element element = new Element(cacheKey, latestDate);
+                    cache.put(element);
                 }
-                Element element = new Element(cacheKey, latestDate);
+            } else {
+                Element element = new Element(cacheKey, appDef.getDateModified());
                 cache.put(element);
             }
         }
@@ -1536,6 +1572,7 @@ public class AppDevUtil {
             latestCal.set(Calendar.MILLISECOND, 0);
             latestDate = latestCal.getTime();
         }
+        
         return latestDate;
     }
     
@@ -1628,40 +1665,125 @@ public class AppDevUtil {
     }
     
     public static void addPluginsToZip(AppDefinition appDef, ZipOutputStream zip) {
-        String baseDir = AppDevUtil.getAppDevBaseDirectory();
-        String projectDirName = getAppGitDirectory(appDef);
-        try {
-            File projectDir = AppDevUtil.dirSetup(baseDir, projectDirName);
-            String targetDirName = "plugins";
-            File targetDir = new File(projectDir, targetDirName);
-            
-            if (targetDir.exists()) {
-                File[] files = targetDir.listFiles();
-                for (File file : files)
-                {
-                    if (file.canRead())
+        if (!AppDevUtil.isGitDisabled()) {
+            String baseDir = AppDevUtil.getAppDevBaseDirectory();
+            String projectDirName = getAppGitDirectory(appDef);
+            try {
+                File projectDir = AppDevUtil.dirSetup(baseDir, projectDirName);
+                String targetDirName = "plugins";
+                File targetDir = new File(projectDir, targetDirName);
+
+                if (targetDir.exists()) {
+                    File[] files = targetDir.listFiles();
+                    for (File file : files)
                     {
-                        FileInputStream fis = null;
-                        try {
-                            zip.putNextEntry(new ZipEntry(file.getName()));
-                            fis = new FileInputStream(file);
-                            byte[] buffer = new byte[4092];
-                            int byteCount = 0;
-                            while ((byteCount = fis.read(buffer)) != -1)
-                            {
-                                zip.write(buffer, 0, byteCount);
-                            }
-                            zip.closeEntry();
-                        } finally {
-                            if (fis != null) {
-                                fis.close();
-                            }
-                        }  
+                        if (file.canRead())
+                        {
+                            FileInputStream fis = null;
+                            try {
+                                zip.putNextEntry(new ZipEntry(file.getName()));
+                                fis = new FileInputStream(file);
+                                byte[] buffer = new byte[4092];
+                                int byteCount = 0;
+                                while ((byteCount = fis.read(buffer)) != -1)
+                                {
+                                    zip.write(buffer, 0, byteCount);
+                                }
+                                zip.closeEntry();
+                            } finally {
+                                if (fis != null) {
+                                    fis.close();
+                                }
+                            }  
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                LogUtil.error(AppDevUtil.class.getName(), e, "");
+            }
+        } else {
+            Set<String> jars = new HashSet<String>();
+            
+            // combine all definitions into a string for matching
+            String concatAppDef = "";
+            if (appDef.getFormDefinitionList() != null) {
+                for (FormDefinition o : appDef.getFormDefinitionList()) {
+                    concatAppDef += o.getJson() + "~~~";
+                }
+            }
+            if (appDef.getDatalistDefinitionList() != null) {
+                for (DatalistDefinition o : appDef.getDatalistDefinitionList()) {
+                    concatAppDef += o.getJson() + "~~~";
+                }
+            }
+            if (appDef.getUserviewDefinitionList() != null) {
+                for (UserviewDefinition o : appDef.getUserviewDefinitionList()) {
+                    concatAppDef += o.getJson() + "~~~";
+                }
+            }
+            if (appDef.getBuilderDefinitionList() != null) {
+                for (BuilderDefinition o : appDef.getBuilderDefinitionList()) {
+                    concatAppDef += o.getJson() + "~~~";
+                }
+            }
+            PackageDefinition packageDef = appDef.getPackageDefinition();
+            if (packageDef != null) {
+                if (packageDef.getPackageActivityPluginMap() != null) {
+                    for (PackageActivityPlugin o : packageDef.getPackageActivityPluginMap().values()) {
+                        concatAppDef += o.getPluginName() + "~~~";
+                        concatAppDef += o.getPluginProperties() + "~~~";
+                    }
+                }
+                if (packageDef.getPackageParticipantMap() != null) {
+                    for (PackageParticipant o : packageDef.getPackageParticipantMap().values()) {
+                        concatAppDef += o.getValue() + "~~~";
+                        concatAppDef += o.getPluginProperties() + "~~~";
                     }
                 }
             }
-        } catch (Exception e) {
-            LogUtil.error(AppDevUtil.class.getName(), e, "");
+            
+            // get osgi plugins
+            PluginManager pluginManager = (PluginManager)AppUtil.getApplicationContext().getBean("pluginManager");
+            Collection<Plugin> pluginList = pluginManager.listOsgiPlugin(null);
+            
+            try {
+                // look for plugins used in any definition file
+                for (Plugin plugin: pluginList) {
+                    String pluginClassName = ClassUtils.getUserClass(plugin).getName();
+                    if (concatAppDef.contains(pluginClassName)) {
+                        // plugin used, copy
+                        String path = pluginManager.getOsgiPluginPath(pluginClassName);
+                        if (path != null) {
+                            File file = new File(path);
+                            if (!jars.contains(file.getName())) {
+                                if (file.canRead())
+                                {
+                                    FileInputStream fis = null;
+                                    try {
+                                        zip.putNextEntry(new ZipEntry(file.getName()));
+                                        fis = new FileInputStream(file);
+                                        byte[] buffer = new byte[4092];
+                                        int byteCount = 0;
+                                        while ((byteCount = fis.read(buffer)) != -1)
+                                        {
+                                            zip.write(buffer, 0, byteCount);
+                                        }
+                                        zip.closeEntry();
+                                    } finally {
+                                        if (fis != null) {
+                                            fis.close();
+                                        }
+                                    }  
+                                }
+
+                                jars.add(file.getName());
+                            }
+                        }
+                    }                
+                }
+            } catch (Exception e) {
+                LogUtil.error(AppDevUtil.class.getName(), e, "");
+            }
         }
     }
     
@@ -1671,36 +1793,94 @@ public class AppDevUtil {
         }
         
         Collection<String> plugins = new ArrayList<String>();
-        String baseDir = AppDevUtil.getAppDevBaseDirectory();
-        String projectDirName = getAppGitDirectory(appDef);
-        try {
-            File projectDir = AppDevUtil.dirSetup(baseDir, projectDirName);
-            String targetDirName = "plugins";
-            File targetDir = new File(projectDir, targetDirName);
-            
-            if (targetDir.exists()) {
-                File[] files = targetDir.listFiles();
-                for (File file : files)
-                {
-                    plugins.add(file.getName());
+        if (!AppDevUtil.isGitDisabled()) {
+            String baseDir = AppDevUtil.getAppDevBaseDirectory();
+            String projectDirName = getAppGitDirectory(appDef);
+            try {
+                File projectDir = AppDevUtil.dirSetup(baseDir, projectDirName);
+                String targetDirName = "plugins";
+                File targetDir = new File(projectDir, targetDirName);
+
+                if (targetDir.exists()) {
+                    File[] files = targetDir.listFiles();
+                    for (File file : files)
+                    {
+                        plugins.add(file.getName());
+                    }
+                }
+            } catch (Exception e) {
+                LogUtil.error(AppDevUtil.class.getName(), e, "");
+            }
+        } else {
+            // combine all definitions into a string for matching
+            String concatAppDef = "";
+            if (appDef.getFormDefinitionList() != null) {
+                for (FormDefinition o : appDef.getFormDefinitionList()) {
+                    concatAppDef += o.getJson() + "~~~";
                 }
             }
-        } catch (Exception e) {
-            LogUtil.error(AppDevUtil.class.getName(), e, "");
+            if (appDef.getDatalistDefinitionList() != null) {
+                for (DatalistDefinition o : appDef.getDatalistDefinitionList()) {
+                    concatAppDef += o.getJson() + "~~~";
+                }
+            }
+            if (appDef.getUserviewDefinitionList() != null) {
+                for (UserviewDefinition o : appDef.getUserviewDefinitionList()) {
+                    concatAppDef += o.getJson() + "~~~";
+                }
+            }
+            if (appDef.getBuilderDefinitionList() != null) {
+                for (BuilderDefinition o : appDef.getBuilderDefinitionList()) {
+                    concatAppDef += o.getJson() + "~~~";
+                }
+            }
+            PackageDefinition packageDef = appDef.getPackageDefinition();
+            if (packageDef != null) {
+                if (packageDef.getPackageActivityPluginMap() != null) {
+                    for (PackageActivityPlugin o : packageDef.getPackageActivityPluginMap().values()) {
+                        concatAppDef += o.getPluginName() + "~~~";
+                        concatAppDef += o.getPluginProperties() + "~~~";
+                    }
+                }
+                if (packageDef.getPackageParticipantMap() != null) {
+                    for (PackageParticipant o : packageDef.getPackageParticipantMap().values()) {
+                        concatAppDef += o.getValue() + "~~~";
+                        concatAppDef += o.getPluginProperties() + "~~~";
+                    }
+                }
+            }
+            
+            // get osgi plugins
+            PluginManager pluginManager = (PluginManager)AppUtil.getApplicationContext().getBean("pluginManager");
+            Collection<Plugin> pluginList = pluginManager.listOsgiPlugin(null);
+        
+            // look for plugins used in any definition file
+            for (Plugin plugin: pluginList) {
+                String pluginClassName = ClassUtils.getUserClass(plugin).getName();
+                if (concatAppDef.contains(pluginClassName)) {
+                    // plugin used, copy
+                    String path = pluginManager.getOsgiPluginPath(pluginClassName);
+                    if (path != null) {
+                        File src = new File(path);
+                        if (!plugins.contains(src.getName())) {
+                            plugins.add(src.getName());
+                        }
+                    }
+                }                
+            }
         }
         return plugins;
     }
     
     public static String cleanForCompare(String xpdl) {
-        xpdl = xpdl.replaceAll("\n", "");
-        xpdl = xpdl.replaceAll("\r", "");
+        xpdl = xpdl.replaceAll("[\r\n]", "");
         xpdl = xpdl.trim();
         
         return xpdl;
     } 
     
     public static String compatibleNewline(String content) {
-        if (content == null) {
+        if (content == null || content.contains("\r\n")) {
             return content;
         }
         
@@ -1709,5 +1889,13 @@ public class AppDevUtil {
         content = content.trim();
         
         return content;
+    }
+    
+    public static void setImportApp(Boolean isImportApp) throws BeansException {
+        importApp.set(isImportApp);
+    }
+
+    public static boolean isImportApp() throws BeansException {
+        return importApp.get() != null;
     }
 }
